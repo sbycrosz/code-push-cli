@@ -25,7 +25,6 @@
   "dependencies": {
     "@devicefarmer/adbkit-apkreader": "^3.2.4",
     "aab-parser": "^1.0.1",
-    "adm-zip": "^0.5.16",
     "backslash": "^0.2.0",
     "bplist-parser": "^0.3.2",
     "chalk": "^4.1.2",
@@ -49,11 +48,11 @@
     "slash": "1.0.0",
     "superagent": "^8.0.9",
     "temp": "^0.9.4",
-    "unzipper": "^0.12.3",
     "which": "^1.2.7",
     "wordwrap": "1.0.0",
     "xcode": "^3.0.1",
     "yargs": "^17.7.2",
+    "yauzl": "^3.4.0",
     "yazl": "^2.5.1"
   },
   "devDependencies": {
@@ -63,7 +62,7 @@
     "@types/node": "^20.3.1",
     "@types/q": "^1.5.8",
     "@types/sinon": "^10.0.15",
-    "@types/unzipper": "^0.10.11",
+    "@types/yauzl": "^3.4.0",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
     "eslint": "^8.45.0",

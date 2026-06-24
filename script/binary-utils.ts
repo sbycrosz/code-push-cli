@@ -6,8 +6,9 @@ import { log } from "./command-executor";
 import * as os from "os";
 import * as Q from "q";
 import * as yazl from "yazl";
-import * as unzipper from "unzipper";
+import * as yauzl from "yauzl";
 import { readFile } from "node:fs/promises";
+import { buffer as readStreamToBuffer } from "node:stream/consumers";
 import * as plist from "plist"
 import * as bplist from "bplist-parser";
 
@@ -51,7 +52,7 @@ export async function extractMetadataFromAndroid(extractFolder, outputFolder) {
 }
 
 export async function extractMetadataFromIOS(ipaPath: string, outputFolder: string) {
-  const { files, appPrefix } = await openIPA(ipaPath);
+  const { files, appPrefix, close } = await openIPA(ipaPath);
 
   const assetsPrefix = `${appPrefix}assets/`;
   const bundlePath = `${appPrefix}main.jsbundle`;
@@ -59,17 +60,19 @@ export async function extractMetadataFromIOS(ipaPath: string, outputFolder: stri
   const fileHashes: { [key: string]: string } = {};
   let bundleBuffer: Buffer | null = null;
 
-  for (const entry of files) {
-    if (entry.type !== "File") continue;
-
-    if (entry.path === bundlePath) {
-      bundleBuffer = await entry.buffer();
-    } else if (entry.path.startsWith(assetsPrefix)) {
-      const relativePath = entry.path.slice(appPrefix.length); // e.g. assets/img/logo.png
-      const hash = sha256(await entry.buffer());
-      fileHashes[`CodePush/${relativePath}`] = hash;
-      log(chalk.gray(`  ${relativePath}:${hash.substring(0, 8)}...\n`));
+  try {
+    for (const entry of files) {
+      if (entry.path === bundlePath) {
+        bundleBuffer = await entry.buffer();
+      } else if (entry.path.startsWith(assetsPrefix)) {
+        const relativePath = entry.path.slice(appPrefix.length); // e.g. assets/img/logo.png
+        const hash = sha256(await entry.buffer());
+        fileHashes[`CodePush/${relativePath}`] = hash;
+        log(chalk.gray(`  ${relativePath}:${hash.substring(0, 8)}...\n`));
+      }
     }
+  } finally {
+    close();
   }
 
   if (Object.keys(fileHashes).length === 0) {
@@ -104,26 +107,25 @@ function sha256(buffer: Buffer): string {
   return crypto.createHash("sha256").update(buffer).digest("hex");
 }
 
-// Open the IPA via its central directory (the authoritative entry index) instead of
-// streaming extraction, which is known to silently drop files. The count check guards
-// against a truncated/corrupt archive.
-async function openIPA(ipaPath: string): Promise<{ files: any[]; appPrefix: string }> {
-  const directory = await unzipper.Open.file(ipaPath);
+type IpaFile = { path: string; buffer: () => Promise<Buffer> };
 
-  if (directory.files.length !== directory.numberOfRecords) {
-    throw new Error(
-      `Invalid IPA: central directory lists ${directory.numberOfRecords} entries but ${directory.files.length} were read. The file may be corrupt or truncated.`
-    );
+// Reads an IPA via its central directory. Entries are read lazily, so only the files a caller
+// touches are loaded — never the whole IPA. Caller must close().
+async function openIPA(ipaPath: string): Promise<{ files: IpaFile[]; appPrefix: string; close: () => void }> {
+  const zipFile = await yauzl.openPromise(ipaPath, { autoClose: false, lazyEntries: true });
+  const files: IpaFile[] = [];
+  for await (const entry of zipFile.eachEntry()) {
+    if (entry.fileName.endsWith("/")) continue;
+    files.push({ path: entry.fileName, buffer: () => zipFile.openReadStreamPromise(entry).then(readStreamToBuffer) });
   }
 
-  const appMatch = directory.files.map((f) => f.path.match(/^(Payload\/[^/]+\.app)\//)).find(Boolean);
-  if (!appMatch) {
+  const appPrefix = files.map((f) => f.path.match(/^(Payload\/[^/]+\.app)\//)?.[1]).find(Boolean);
+  if (!appPrefix) {
+    zipFile.close();
     throw new Error('Invalid IPA structure: no "Payload/*.app" folder found.');
   }
-
-  return { files: directory.files, appPrefix: `${appMatch[1]}/` };
+  return { files, appPrefix: `${appPrefix}/`, close: () => zipFile.close() };
 }
-
 
 type BinaryHashes = { [p: string]: string };
 
@@ -173,19 +175,23 @@ function parsePlistBuffer(buf: Buffer): any {
 }
 
 export async function getIosVersion(ipaPath: string) {
-  const { files, appPrefix } = await openIPA(ipaPath);
+  const { files, appPrefix, close } = await openIPA(ipaPath);
 
-  const plistEntry = files.find((f) => f.path === `${appPrefix}Info.plist`);
-  if (!plistEntry) {
-    throw new Error("Info.plist not found in IPA app folder.");
+  try {
+    const plistEntry = files.find((f) => f.path === `${appPrefix}Info.plist`);
+    if (!plistEntry) {
+      throw new Error("Info.plist not found in IPA app folder.");
+    }
+
+    const data = parsePlistBuffer(await plistEntry.buffer());
+
+    log(chalk.cyan(`App Version: ${data.CFBundleShortVersionString}, Build: ${data.CFBundleVersion}\n`));
+
+    return {
+      version: data.CFBundleShortVersionString,
+      build: data.CFBundleVersion,
+    };
+  } finally {
+    close();
   }
-
-  const data = parsePlistBuffer(await plistEntry.buffer());
-
-  log(chalk.cyan(`App Version: ${data.CFBundleShortVersionString}, Build: ${data.CFBundleVersion}\n`));
-
-  return {
-    version: data.CFBundleShortVersionString,
-    build: data.CFBundleVersion,
-  };
 }

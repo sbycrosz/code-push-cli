@@ -40,7 +40,7 @@ import {
   runHermesEmitBinaryCommand,
   takeHermesBaseBytecode,
 } from "./react-native-utils";
-import { fileDoesNotExistOrIsDirectory, fileExists, isBinaryOrZip, extractAPK, extractAAB } from "./utils/file-utils";
+import { fileDoesNotExistOrIsDirectory, fileExists, isBinaryOrZip, extractArchive } from "./utils/file-utils";
 import { getAndroidVersionInfo } from "./utils/gradle-utils";
 
 import AccountManager = require("./management-sdk");
@@ -1529,7 +1529,7 @@ export const releaseNative = (command: cli.IReleaseNativeCommand): Promise<void>
         } else {
           if (targetBinaryPathNormalised.endsWith(".apk")) {
             log(chalk.cyan(`\nExtracting APK/ARR file:\n`));
-            await extractAPK(targetBinaryPath, extractFolder);
+            await extractArchive(targetBinaryPath, extractFolder);
 
             const reader = await ApkReader.open(targetBinaryPath);
             const { versionName: appStoreVersion, versionCode } = await reader.readManifest();
@@ -1541,7 +1541,7 @@ export const releaseNative = (command: cli.IReleaseNativeCommand): Promise<void>
             };
           } else if (targetBinaryPathNormalised.endsWith(".aab")) {
             log(chalk.cyan(`\nExtracting AAB file:\n`));
-            await extractAAB(targetBinaryPath, extractFolder);
+            await extractArchive(targetBinaryPath, extractFolder);
             const { versionName: appStoreVersion, versionCode } = await aabParser.parseAabManifest(targetBinaryPath);
 
             const metadataZip = await extractMetadataFromAndroid(`${extractFolder}/base`, outputFolder); // base folder is nested in AAB
