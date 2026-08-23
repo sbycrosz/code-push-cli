@@ -876,6 +876,12 @@ yargs
         description: "Option that gets passed to react-native bundler. Can be specified multiple times.",
         type: "array",
       })
+      .option("force", {
+        default: false,
+        demand: false,
+        description: "Release even when generated assets exceed the 500 KiB per-file limit",
+        type: "boolean",
+      })
       .option("buildNumber", {
         alias: "bn",
         default: null,
@@ -1075,6 +1081,12 @@ yargs
         demand: false,
         description: "Option that gets passed to react-native bundler. Can be specified multiple times.",
         type: "array",
+      })
+      .option("force", {
+        default: false,
+        demand: false,
+        description: "Release even when generated assets exceed the 500 KiB per-file limit",
+        type: "boolean",
       })
       .option("buildNumber", {
         alias: "bn",
@@ -1536,6 +1548,7 @@ export function createCommand(): cli.ICommand {
           releaseReactCommand.xcodeTargetName = argv["xcodeTargetName"] as any;
           releaseReactCommand.buildConfigurationName = argv["buildConfigurationName"] as any;
           releaseReactCommand.extraBundlerOptions = argv["extraBundlerOption"] as any;
+          releaseReactCommand.force = argv["force"] as any;
         }
         break;
 
@@ -1573,6 +1586,7 @@ export function createCommand(): cli.ICommand {
           releaseExpoCommand.xcodeTargetName = argv["xcodeTargetName"] as any;
           releaseExpoCommand.buildConfigurationName = argv["buildConfigurationName"] as any;
           releaseExpoCommand.extraBundlerOptions = argv["extraBundlerOption"] as any;
+          releaseExpoCommand.force = argv["force"] as any;
         }
         break;
 
