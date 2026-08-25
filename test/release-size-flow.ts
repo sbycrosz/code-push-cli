@@ -33,7 +33,8 @@ describe("Release size flow", () => {
     includeSourceMap = false;
     originalCwd = process.cwd();
     projectDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "revopush-release-flow-"));
-    outputDirectory = path.join(projectDirectory, "release-output");
+    // Must be named "CodePush": releaseReact/releaseExpo reject any other --outputDir basename.
+    outputDirectory = path.join(projectDirectory, "CodePush");
     createProject(projectDirectory);
     process.chdir(projectDirectory);
 
