@@ -1322,6 +1322,9 @@ export const releaseExpo = (command: cli.IReleaseReactCommand): Promise<void> =>
   const outputFolder: string = command.outputDir || path.join(os.tmpdir(), "CodePush");
   const sourcemapOutputFolder: string = command.sourcemapOutput || path.join(os.tmpdir(), "CodePushSourceMap");
   const baseReleaseTmpFolder: string = path.join(os.tmpdir(), "CodePushBaseRelease");
+  // releaseCommand below is `command` itself, and it overwrites command.outputDir with the
+  // resolved path -- so capture whether the user actually passed one before that happens.
+  const isTempOutputFolder: boolean = !command.outputDir;
 
   const releaseCommand: cli.IReleaseReactCommand = <any>command;
   releaseCommand.package = outputFolder;
@@ -1403,7 +1406,7 @@ export const releaseExpo = (command: cli.IReleaseReactCommand): Promise<void> =>
       return releaseReactNative(releaseCommand, () => printReleaseSizeWarnings(releaseSizeAnalysis, command.force || false));
     })
     .then(async () => {
-      if (!command.outputDir) {
+      if (isTempOutputFolder) {
         await deleteFolder(outputFolder);
       }
 
@@ -1426,6 +1429,9 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
   const outputFolder: string = command.outputDir || path.join(os.tmpdir(), "CodePush");
   const sourcemapOutputFolder: string = command.sourcemapOutput || path.join(os.tmpdir(), "CodePushSourceMap");
   const baseReleaseTmpFolder: string = path.join(os.tmpdir(), "CodePushBaseRelease");
+  // releaseCommand below is `command` itself, and it overwrites command.outputDir with the
+  // resolved path -- so capture whether the user actually passed one before that happens.
+  const isTempOutputFolder: boolean = !command.outputDir;
 
   const releaseCommand: cli.IReleaseReactCommand = <any>command;
   releaseCommand.package = outputFolder;
@@ -1513,7 +1519,7 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
         return releaseReactNative(releaseCommand, () => printReleaseSizeWarnings(releaseSizeAnalysis, command.force || false));
       })
       .then(async () => {
-        if (!command.outputDir) {
+        if (isTempOutputFolder) {
           await deleteFolder(outputFolder);
         }
 
