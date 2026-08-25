@@ -1,6 +1,6 @@
 {
   "name": "@revopush/code-push-cli",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "description": "Management CLI for the CodePush service",
   "main": "./script/cli.js",
   "scripts": {
@@ -24,7 +24,6 @@
   ],
   "dependencies": {
     "@devicefarmer/adbkit-apkreader": "^3.2.4",
-    "adm-zip": "^0.6.0",
     "backslash": "^0.2.0",
     "bplist-parser": "^0.3.2",
     "chalk": "^4.1.2",
@@ -33,7 +32,6 @@
     "email-validator": "^2.0.4",
     "gradle-to-js": "2.0.1",
     "jsonwebtoken": "^9.0.2",
-    "jszip": "^3.10.1",
     "moment": "^2.29.4",
     "opener": "^1.5.2",
     "parse-duration": "^2.1.6",
@@ -50,11 +48,11 @@
     "slash": "1.0.0",
     "superagent": "^8.0.9",
     "temp": "^0.9.4",
-    "unzipper": "^0.12.3",
     "which": "^1.2.7",
     "wordwrap": "1.0.0",
     "xcode": "^3.0.1",
     "yargs": "^17.7.2",
+    "yauzl": "^3.4.0",
     "yazl": "^2.5.1"
   },
   "overrides": {
@@ -71,7 +69,7 @@
     "@types/node": "^20.3.1",
     "@types/q": "^1.5.8",
     "@types/sinon": "^10.0.15",
-    "@types/unzipper": "^0.10.11",
+    "@types/yauzl": "^3.4.0",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
     "eslint": "^8.45.0",

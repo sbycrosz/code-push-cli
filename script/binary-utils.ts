@@ -1,12 +1,15 @@
 import * as path from "path";
 import * as fs from "fs";
+import * as crypto from "crypto";
 import * as chalk from "chalk";
 import { log } from "./command-executor";
-import { hashFile } from "./hash-utils";
 import * as os from "os";
 import * as Q from "q";
 import * as yazl from "yazl";
+import * as yauzl from "yauzl";
 import { readFile } from "node:fs/promises";
+import { buffer as readStreamToBuffer } from "node:stream/consumers";
+import * as protobuf from "protobufjs";
 import * as plist from "plist"
 import * as bplist from "bplist-parser";
 
@@ -49,46 +52,45 @@ export async function extractMetadataFromAndroid(extractFolder, outputFolder) {
   return zipPath;
 }
 
-export async function extractMetadataFromIOS(extractFolder, outputFolder) {
-  const payloadFolder = path.join(extractFolder, "Payload");
-  if (!fs.existsSync(payloadFolder)) {
-    throw new Error("Invalid IPA structure: Payload folder not found.");
-  }
+export async function extractMetadataFromIOS(ipaPath: string, outputFolder: string) {
+  const { files, appPrefix, close } = await openIPA(ipaPath);
 
-  const appFolders = fs.readdirSync(payloadFolder).filter((item) => {
-    const itemPath = path.join(payloadFolder, item);
-    return fs.statSync(itemPath).isDirectory() && item.endsWith(".app");
-  });
-
-  if (appFolders.length === 0) {
-    throw new Error("Invalid IPA structure: No .app folder found in Payload.");
-  }
-
-  const appFolder = path.join(payloadFolder, appFolders[0]);
-  const codePushFolder = path.join(appFolder, "assets");
+  const assetsPrefix = `${appPrefix}assets/`;
+  const bundlePath = `${appPrefix}main.jsbundle`;
 
   const fileHashes: { [key: string]: string } = {};
+  let bundleBuffer: Buffer | null = null;
 
-  if (fs.existsSync(codePushFolder)) {
-    await calculateHashesForDirectory(codePushFolder, appFolder, fileHashes);
-  } else {
-    log(chalk.yellow(`\nWarning: CodePush folder not found in IPA.\n`));
+  try {
+    for (const entry of files) {
+      if (entry.path === bundlePath) {
+        bundleBuffer = await entry.buffer();
+      } else if (entry.path.startsWith(assetsPrefix)) {
+        const relativePath = entry.path.slice(appPrefix.length); // e.g. assets/img/logo.png
+        const hash = sha256(await entry.buffer());
+        fileHashes[`CodePush/${relativePath}`] = hash;
+        log(chalk.gray(`  ${relativePath}:${hash.substring(0, 8)}...\n`));
+      }
+    }
+  } finally {
+    close();
   }
 
-  const mainJsBundlePath = path.join(appFolder, "main.jsbundle");
-  if (fs.existsSync(mainJsBundlePath)) {
-    log(chalk.cyan(`\nFound main.jsbundle, calculating hash:\n`));
-    const bundleHash = await hashFile(mainJsBundlePath);
-    fileHashes["CodePush/main.jsbundle"] = bundleHash;
-
-    // Copy bundle to output folder
-    const outputCodePushFolder = path.join(outputFolder, "CodePush");
-    fs.mkdirSync(outputCodePushFolder, { recursive: true });
-    const outputBundlePath = path.join(outputCodePushFolder, "main.jsbundle");
-    fs.copyFileSync(mainJsBundlePath, outputBundlePath);
-  } else {
-    throw new Error("main.jsbundle not found in IPA root folder.");
+  if (Object.keys(fileHashes).length === 0) {
+    log(chalk.yellow(`\nWarning: CodePush assets folder not found in IPA.\n`));
   }
+
+  if (!bundleBuffer) {
+    throw new Error("main.jsbundle not found in IPA app folder.");
+  }
+
+  log(chalk.cyan(`\nFound main.jsbundle, calculating hash:\n`));
+  fileHashes["CodePush/main.jsbundle"] = sha256(bundleBuffer);
+
+  // Write bundle to output folder (needed for the release package zip)
+  const outputCodePushFolder = path.join(outputFolder, "CodePush");
+  fs.mkdirSync(outputCodePushFolder, { recursive: true });
+  fs.writeFileSync(path.join(outputCodePushFolder, "main.jsbundle"), bundleBuffer);
 
   // Save packageManifest.json
   const manifestPath = path.join(outputFolder, "packageManifest.json");
@@ -102,30 +104,29 @@ export async function extractMetadataFromIOS(extractFolder, outputFolder) {
   return zipPath;
 }
 
-async function calculateHashesForDirectory(
-  directoryPath: string,
-  basePath: string,
-  fileHashes: { [key: string]: string }
-) {
-  const items = fs.readdirSync(directoryPath);
-
-  for (const item of items) {
-    const itemPath = path.join(directoryPath, item);
-    const stat = fs.statSync(itemPath);
-
-    if (stat.isDirectory()) {
-      await calculateHashesForDirectory(itemPath, basePath, fileHashes);
-    } else {
-      // Calculate relative path from basePath (app folder) to the file
-      const relativePath = path.relative(basePath, itemPath).replace(/\\/g, "/");
-      const hash = await hashFile(itemPath);
-      const hashKey = `CodePush/${relativePath}`
-      fileHashes[hashKey] = hash;
-      log(chalk.gray(`  ${relativePath}:${hash.substring(0, 8)}...\n`));
-    }
-  }
+function sha256(buffer: Buffer): string {
+  return crypto.createHash("sha256").update(buffer).digest("hex");
 }
 
+type IpaFile = { path: string; buffer: () => Promise<Buffer> };
+
+// Reads an IPA via its central directory. Entries are read lazily, so only the files a caller
+// touches are loaded — never the whole IPA. Caller must close().
+async function openIPA(ipaPath: string): Promise<{ files: IpaFile[]; appPrefix: string; close: () => void }> {
+  const zipFile = await yauzl.openPromise(ipaPath, { autoClose: false, lazyEntries: true });
+  const files: IpaFile[] = [];
+  for await (const entry of zipFile.eachEntry()) {
+    if (entry.fileName.endsWith("/")) continue;
+    files.push({ path: entry.fileName, buffer: () => zipFile.openReadStreamPromise(entry).then(readStreamToBuffer) });
+  }
+
+  const appPrefix = files.map((f) => f.path.match(/^(Payload\/[^/]+\.app)\//)?.[1]).find(Boolean);
+  if (!appPrefix) {
+    zipFile.close();
+    throw new Error('Invalid IPA structure: no "Payload/*.app" folder found.');
+  }
+  return { files, appPrefix: `${appPrefix}/`, close: () => zipFile.close() };
+}
 
 type BinaryHashes = { [p: string]: string };
 
@@ -164,46 +165,101 @@ function createZipArchive(sourceFolder: string, zipPath: string, filesToInclude:
   });
 }
 
-function parseAnyPlistFile(plistPath: string): any {
-  const buf = fs.readFileSync(plistPath);
-
+function parsePlistBuffer(buf: Buffer): any {
   if (buf.slice(0, 6).toString("ascii") === "bplist") {
     const arr = bplist.parseBuffer(buf);
     if (!arr?.length) throw new Error("Empty binary plist");
     return arr[0];
   }
 
-  const xml = buf.toString("utf8");
-  return plist.parse(xml);
+  return plist.parse(buf.toString("utf8"));
 }
 
-export async function getIosVersion(extractFolder: string) {
-  const payloadFolder = path.join(extractFolder, "Payload");
-  if (!fs.existsSync(payloadFolder)) {
-    throw new Error("Invalid IPA structure: Payload folder not found.");
+export async function getIosVersion(ipaPath: string) {
+  const { files, appPrefix, close } = await openIPA(ipaPath);
+
+  try {
+    const plistEntry = files.find((f) => f.path === `${appPrefix}Info.plist`);
+    if (!plistEntry) {
+      throw new Error("Info.plist not found in IPA app folder.");
+    }
+
+    const data = parsePlistBuffer(await plistEntry.buffer());
+
+    log(chalk.cyan(`App Version: ${data.CFBundleShortVersionString}, Build: ${data.CFBundleVersion}\n`));
+
+    return {
+      version: data.CFBundleShortVersionString,
+      build: data.CFBundleVersion,
+    };
+  } finally {
+    close();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Android App Bundle (.aab)
+// ---------------------------------------------------------------------------
+// Minimal .aab manifest reader; replaces the unmaintained aab-parser, which
+// pinned a vulnerable protobufjs (^6.11.2).
+
+export type AabManifest = {
+  versionCode: number;
+  versionName: string;
+  packageName: string;
+  compiledSdkVersion: number;
+  compiledSdkVersionCodename: number;
+};
+
+type ManifestAttribute = { name: string; value: string };
+
+const AAB_MANIFEST_ENTRY_NAME = "base/manifest/AndroidManifest.xml";
+
+// An AAB's <manifest> is protobuf-encoded as an aapt.pb.XmlNode. We only read a
+// few attributes, so we declare just that slice (field numbers from AOSP
+// aapt2/Resources.proto); the decoder skips every field we omit.
+const XmlNode = protobuf.parse(`
+    syntax = "proto3";
+    package aapt.pb;
+    message XmlAttribute { string name = 2; string value = 3; }
+    message XmlElement { string name = 3; repeated XmlAttribute attribute = 4; }
+    message XmlNode { XmlElement element = 1; }
+`).root.lookupType("aapt.pb.XmlNode");
+
+async function readManifestAttributes(file: string | Buffer): Promise<ManifestAttribute[]> {
+  const zipFile = typeof file === "string" ? await yauzl.openPromise(file) : await yauzl.fromBufferPromise(file);
+
+  let manifest: Buffer | undefined;
+  for await (const entry of zipFile.eachEntry()) {
+    if (entry.fileName !== AAB_MANIFEST_ENTRY_NAME) continue;
+    manifest = await readStreamToBuffer(await zipFile.openReadStreamPromise(entry));
+    break; // breaking out of eachEntry() closes the zip file for us
   }
 
-  const appFolders = fs.readdirSync(payloadFolder).filter((item) => {
-    const itemPath = path.join(payloadFolder, item);
-    return fs.statSync(itemPath).isDirectory() && item.endsWith(".app");
-  });
-
-  if (appFolders.length === 0) {
-    throw new Error("Invalid IPA structure: No .app folder found in Payload.");
+  if (manifest === undefined) {
+    throw new Error("Could not find AndroidManifest.xml file inside the app bundle file");
   }
 
-  const appFolder = path.join(payloadFolder, appFolders[0]);
+  const decoded = XmlNode.decode(manifest).toJSON() as { element?: { attribute?: ManifestAttribute[] } };
+  return decoded.element?.attribute ?? [];
+}
 
-  const plistPath = path.join(appFolder, "Info.plist");
+export async function parseAabManifest(file: string | Buffer): Promise<AabManifest> {
+  const attributes = await readManifestAttributes(file);
 
-  const data = parseAnyPlistFile(plistPath);
-
-  console.log('App Version (Short):', data.CFBundleShortVersionString);
-  console.log('Build Number:', data.CFBundleVersion);
-  console.log('Bundle ID:', data.CFBundleIdentifier);
+  function getAttribute(name: string): string {
+    const attribute = attributes.find((attr) => attr.name === name);
+    if (attribute === undefined) {
+      throw new Error(`Attribute "${name}" not found in AndroidManifest.xml`);
+    }
+    return attribute.value;
+  }
 
   return {
-    version: data.CFBundleShortVersionString,
-    build: data.CFBundleVersion
+    versionCode: Number(getAttribute("versionCode")),
+    versionName: getAttribute("versionName"),
+    packageName: getAttribute("package"),
+    compiledSdkVersion: Number(getAttribute("compileSdkVersion")),
+    compiledSdkVersionCodename: Number(getAttribute("compileSdkVersionCodename")),
   };
 }

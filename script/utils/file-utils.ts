@@ -2,8 +2,8 @@ import * as fs from "fs";
 import * as path from "path";
 import * as rimraf from "rimraf";
 import * as temp from "temp";
-import * as unzipper from "unzipper";
-import * as AdmZip from "adm-zip";
+import * as yauzl from "yauzl";
+import { pipeline } from "node:stream/promises";
 
 import superagent = require("superagent");
 
@@ -68,16 +68,12 @@ export async function downloadBlob(url: string, folder: string, filename: string
   });
 }
 
-export async function extractIPA(zipPath: string, extractTo: string) {
-  await fs.createReadStream(zipPath).pipe(unzipper.Extract({ path: extractTo })).promise();
-}
-
-export async function extractAPK(zipPath: string, extractTo: string) {
-  const zip = new AdmZip(zipPath);
-  zip.extractAllTo(extractTo, true);
-}
-
-export async function extractAAB(zipPath: string, extractTo: string) {
-  const zip = new AdmZip(zipPath);
-  zip.extractAllTo(extractTo, true);
+export async function extractArchive(zipPath: string, extractTo: string) {
+  const zipFile = await yauzl.openPromise(zipPath);
+  for await (const entry of zipFile.eachEntry()) {
+    if (entry.fileName.endsWith("/")) continue; // directory entry; parents are created below
+    const outPath = path.join(extractTo, entry.fileName);
+    await fs.promises.mkdir(path.dirname(outPath), { recursive: true });
+    await pipeline(await zipFile.openReadStreamPromise(entry), fs.createWriteStream(outPath));
+  }
 }

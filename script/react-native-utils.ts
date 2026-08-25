@@ -3,7 +3,7 @@ import * as chalk from "chalk";
 import * as path from "path";
 import * as childProcess from "child_process";
 import { coerce, compare, gte, valid } from "semver";
-import { downloadBlob, extractIPA, fileDoesNotExistOrIsDirectory } from "./utils/file-utils";
+import { downloadBlob, extractArchive, fileDoesNotExistOrIsDirectory } from "./utils/file-utils";
 import * as dotenv from "dotenv";
 import { DotenvParseOutput } from "dotenv";
 import * as cli from "../script/types/cli";
@@ -43,7 +43,7 @@ export async function getBundleSourceMapOutput(command: cli.IReleaseReactCommand
       break;
     }
     default:
-      throw new Error('Platform must be either "android", "ios" or "windows".');
+      throw new Error('Platform must be either "android" or "ios".');
   }
   return bundleSourceMapOutput;
 }
@@ -60,7 +60,7 @@ export async function takeHermesBaseBytecode(
   }
 
   const baseReleaseArchive = await downloadBlob(bundleBlobUrl, baseReleaseTmpFolder);
-  await extractIPA(baseReleaseArchive, baseReleaseTmpFolder);
+  await extractArchive(baseReleaseArchive, baseReleaseTmpFolder);
   const baseReleaseBundle = path.join(baseReleaseTmpFolder, path.basename(outputFolder), bundleName);
 
   if (!fs.existsSync(baseReleaseBundle)) {
@@ -174,7 +174,7 @@ export async function runHermesEmitBinaryCommand(
             break;
           }
           default:
-            throw new Error('Platform must be either "android", "ios" or "windows".');
+            throw new Error('Platform must be either "android" or "ios".');
         }
       }
       const composeSourceMapsArgs = [
@@ -240,7 +240,7 @@ export async function getMinifyParams(command: cli.IReleaseReactCommand) {
       return isHermes ? ["--minify", false] : [];
     }
     default:
-      throw new Error('Platform must be either "android", "ios" or "windows".');
+      throw new Error('Platform must be either "android" or "ios".');
   }
 }
 
