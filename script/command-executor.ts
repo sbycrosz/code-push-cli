@@ -42,6 +42,14 @@ import {
 } from "./react-native-utils";
 import { fileDoesNotExistOrIsDirectory, fileExists, isBinaryOrZip, extractArchive } from "./utils/file-utils";
 import { getAndroidVersionInfo } from "./utils/gradle-utils";
+import {
+  analyzeReleaseContents,
+  enforceAssetSizeLimit,
+  formatReleaseSizeWarnings,
+  formatSourceMapWarning,
+  ReleaseSizeAnalysis,
+  shouldAnalyzeReleaseSizes,
+} from "./utils/release-size-utils";
 
 import AccountManager = require("./management-sdk");
 import wordwrap = require("wordwrap");
@@ -1275,6 +1283,37 @@ function validateReactReleaseCommand(
   return { platform, bundleName, entryFile, projectName };
 }
 
+function validateGeneratedReleaseSizes(
+  command: cli.IReleaseReactCommand,
+  outputFolder: string,
+  bundleName: string,
+  platform: string
+): ReleaseSizeAnalysis | null {
+  if (!shouldAnalyzeReleaseSizes(platform)) {
+    return null;
+  }
+
+  const analysis = analyzeReleaseContents(outputFolder, bundleName);
+  const sourceMapWarning = formatSourceMapWarning(analysis.sourceMaps);
+  if (sourceMapWarning) {
+    console.warn(chalk.yellow(`\n${sourceMapWarning}\n`));
+  }
+
+  enforceAssetSizeLimit(analysis, command.force || false);
+  return analysis;
+}
+
+function printReleaseSizeWarnings(analysis: ReleaseSizeAnalysis | null, force: boolean): void {
+  if (!analysis) {
+    return;
+  }
+
+  const warning = formatReleaseSizeWarnings(analysis, force);
+  if (warning) {
+    console.warn(chalk.yellow(`\n${warning}\n`));
+  }
+}
+
 export const releaseExpo = (command: cli.IReleaseReactCommand): Promise<void> => {
   const { platform, bundleName, projectName } = validateReactReleaseCommand(command, {
     resolveEntryFile: false,
@@ -1288,6 +1327,7 @@ export const releaseExpo = (command: cli.IReleaseReactCommand): Promise<void> =>
   releaseCommand.package = outputFolder;
   releaseCommand.outputDir = outputFolder;
   releaseCommand.bundleName = bundleName;
+  let releaseSizeAnalysis: ReleaseSizeAnalysis | null = null;
 
   return sdk
     .getDeployment(command.appName, command.deploymentName)
@@ -1347,6 +1387,9 @@ export const releaseExpo = (command: cli.IReleaseReactCommand): Promise<void> =>
         );
       }
     })
+    .then(() => {
+      releaseSizeAnalysis = validateGeneratedReleaseSizes(command, outputFolder, bundleName, platform);
+    })
     .then(async () => {
       if (command.privateKeyPath) {
         log(chalk.cyan("\nSigning the bundle:\n"));
@@ -1357,7 +1400,7 @@ export const releaseExpo = (command: cli.IReleaseReactCommand): Promise<void> =>
     })
     .then(() => {
       log(chalk.cyan("\nReleasing update contents to CodePush:\n"));
-      return releaseReactNative(releaseCommand);
+      return releaseReactNative(releaseCommand, () => printReleaseSizeWarnings(releaseSizeAnalysis, command.force || false));
     })
     .then(async () => {
       if (!command.outputDir) {
@@ -1388,6 +1431,7 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
   releaseCommand.package = outputFolder;
   releaseCommand.outputDir = outputFolder;
   releaseCommand.bundleName = bundleName;
+  let releaseSizeAnalysis: ReleaseSizeAnalysis | null = null;
 
   // Check that the app and deployment exist before releasing an update.
   // This validation helps to save about 1 minute or more in case user has typed wrong app or deployment name.
@@ -1453,6 +1497,9 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
           );
         }
       })
+      .then(() => {
+        releaseSizeAnalysis = validateGeneratedReleaseSizes(command, outputFolder, bundleName, platform);
+      })
       .then(async () => {
         if (command.privateKeyPath) {
           log(chalk.cyan("\nSigning the bundle:\n"));
@@ -1463,7 +1510,7 @@ export const releaseReact = (command: cli.IReleaseReactCommand): Promise<void> =
       })
       .then(() => {
         log(chalk.cyan("\nReleasing update contents to CodePush:\n"));
-        return releaseReactNative(releaseCommand);
+        return releaseReactNative(releaseCommand, () => printReleaseSizeWarnings(releaseSizeAnalysis, command.force || false));
       })
       .then(async () => {
         if (!command.outputDir) {
@@ -1593,7 +1640,7 @@ export const releaseNative = (command: cli.IReleaseNativeCommand): Promise<void>
     });
 };
 
-const releaseReactNative = (command: cli.IReleaseReactCommand): Promise<void> => {
+const releaseReactNative = (command: cli.IReleaseReactCommand, onReleaseCompleted?: () => void): Promise<void> => {
   // for initial release we explicitly define release as optional, disabled, without rollout, with a special description
   const updateMetadata: ReactNativePackageInfo = {
     description: command.initial ? `Zero release for v${command.appStoreVersion}` : command.description,
@@ -1607,10 +1654,14 @@ const releaseReactNative = (command: cli.IReleaseReactCommand): Promise<void> =>
     buildNumber: command.buildNumber,
   };
 
-  return doRelease(command, updateMetadata);
+  return doRelease(command, updateMetadata, onReleaseCompleted);
 };
 
-const doRelease = (command: cli.IReleaseCommand | cli.IReleaseReactCommand, updateMetadata: PackageInfo): Promise<void> => {
+const doRelease = (
+  command: cli.IReleaseCommand | cli.IReleaseReactCommand,
+  updateMetadata: PackageInfo,
+  onReleaseCompleted?: () => void
+): Promise<void> => {
   if (isBinaryOrZip(command.package)) {
     throw new Error(
       "It is unnecessary to package releases in a .zip or binary file. Please specify the direct path to the update content's directory (e.g. /platforms/ios/www) or file (e.g. main.jsbundle)."
@@ -1657,6 +1708,10 @@ const doRelease = (command: cli.IReleaseCommand | cli.IReleaseReactCommand, upda
           command.appName +
           '" app.'
       );
+
+      if (onReleaseCompleted) {
+        onReleaseCompleted();
+      }
     })
     .catch((err: CodePushError) => releaseErrorHandler(err, command));
 };
