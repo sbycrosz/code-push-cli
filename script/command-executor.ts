@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { extractMetadataFromAndroid, extractMetadataFromIOS, getIosVersion } from "./binary-utils";
+import { extractMetadataFromAndroid, extractMetadataFromIOS, getIosVersion, parseAabManifest } from "./binary-utils";
 
 const childProcess = require("child_process");
 import debugCommand from "./commands/debug";
@@ -15,7 +15,6 @@ import * as semver from "semver";
 import * as cli from "../script/types/cli";
 import sign from "./sign";
 const ApkReader = require("@devicefarmer/adbkit-apkreader");
-import { parseAabManifest } from "./utils/aab-utils";
 import {
   AccessKey,
   Account,
