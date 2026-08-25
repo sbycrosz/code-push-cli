@@ -1,9 +1,9 @@
 // Minimal Android App Bundle (.aab) manifest reader; replaces the unmaintained
 // aab-parser, which pinned a vulnerable protobufjs (^6.11.2).
 
-import * as fs from "fs";
-import * as jszip from "jszip";
 import * as protobuf from "protobufjs";
+import * as yauzl from "yauzl";
+import { buffer as readStreamToBuffer } from "node:stream/consumers";
 
 export type AabManifest = {
     versionCode: number;
@@ -14,6 +14,8 @@ export type AabManifest = {
 };
 
 type ManifestAttribute = { name: string; value: string };
+
+const MANIFEST_ENTRY_NAME = "base/manifest/AndroidManifest.xml";
 
 // An AAB's <manifest> is protobuf-encoded as an aapt.pb.XmlNode. We only read a
 // few attributes, so we declare just that slice (field numbers from AOSP
@@ -27,9 +29,15 @@ const XmlNode = protobuf.parse(`
 `).root.lookupType("aapt.pb.XmlNode");
 
 async function readManifestAttributes(file: string | Buffer): Promise<ManifestAttribute[]> {
-    const buffer = typeof file === "string" ? await fs.promises.readFile(file) : file;
-    const archive = await jszip.loadAsync(buffer);
-    const manifest = await archive.file("base/manifest/AndroidManifest.xml")?.async("nodebuffer");
+    const zipFile = typeof file === "string" ? await yauzl.openPromise(file) : await yauzl.fromBufferPromise(file);
+
+    let manifest: Buffer | undefined;
+    for await (const entry of zipFile.eachEntry()) {
+        if (entry.fileName !== MANIFEST_ENTRY_NAME) continue;
+        manifest = await readStreamToBuffer(await zipFile.openReadStreamPromise(entry));
+        break; // breaking out of eachEntry() closes the zip file for us
+    }
+
     if (manifest === undefined) {
         throw new Error("Could not find AndroidManifest.xml file inside the app bundle file");
     }
